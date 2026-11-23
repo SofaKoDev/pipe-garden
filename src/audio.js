@@ -1,5 +1,16 @@
+const MUTE_STORAGE_KEY = 'pipe-garden-muted';
+
+function readMutedPref() {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(MUTE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 let ctx = null;
-let muted = false;
+let muted = readMutedPref();
 
 function getCtx() {
   if (muted || typeof window === 'undefined') return null;
@@ -12,6 +23,13 @@ function getCtx() {
 
 export function setMuted(value) {
   muted = Boolean(value);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(MUTE_STORAGE_KEY, String(muted));
+    }
+  } catch {
+    // Ignore storage errors (e.g. private browsing / quota)
+  }
 }
 
 export function isMuted() {

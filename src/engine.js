@@ -225,11 +225,17 @@ export function generateLevel(difficultyId = 'sprout', rng = Math.random) {
     tile.visualRotation = tile.rotation;
   }
 
-  // Guarantee the level never starts already solved
-  if (scrambledCount === 0 || traceFlow({ size, grid, start: path[0], goal: path[path.length - 1] }).reachedGoal) {
-    const mid = path[Math.max(1, Math.floor(path.length / 2))];
-    const tile = grid[mid.r][mid.c];
-    tile.rotation = (tile.solutionRotation + 1) % 4;
+  // Guarantee the level never starts already solved (including via decoy shortcuts)
+  if (
+    scrambledCount === 0 ||
+    traceFlow({ size, grid, start: path[0], goal: path[path.length - 1] }).reachedGoal
+  ) {
+    const first = path[1];
+    const tile = grid[first.r][first.c];
+    for (let step = 0; step < 4; step += 1) {
+      if (!getPorts(tile.type, tile.rotation).includes(3)) break;
+      tile.rotation = (tile.rotation + 1) % 4;
+    }
     tile.visualRotation = tile.rotation;
   }
 
