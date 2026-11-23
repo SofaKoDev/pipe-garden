@@ -17,14 +17,35 @@ import {
 
 const STORAGE_KEY = 'pipe-garden-bloomed-count';
 
+function readBloomedCount() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveBloomedCount(count) {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(count));
+  } catch {
+    // Ignore storage errors (e.g. private browsing / quota)
+  }
+}
+
 const state = {
   difficultyId: 'sprout',
   mode: 'relaxed', // 'relaxed' | 'timed'
   level: null,
   status: 'playing', // 'playing' | 'flowing' | 'won' | 'leaked'
+  reachedGoalWithLeak: false,
   flowingKeys: new Set(),
   leakKeys: new Set(),
-  bloomedCount: Number(localStorage.getItem(STORAGE_KEY) || 0),
+  tileButtons: new Map(),
+  bloomedCount: readBloomedCount(),
   timerLeft: 0,
   timerTotal: 0,
   timerHandle: null,
@@ -109,11 +130,12 @@ function renderPipeSvg(tile) {
     </svg>`;
 }
 
-function startTimerIfNeeded() {
+function startTimerIfNeeded(durationSeconds = null) {
   clearTimers();
   if (state.mode !== 'timed') return;
-  state.timerTotal = state.level.difficulty.timerSeconds;
-  state.timerLeft = state.timerTotal;
+  const duration = durationSeconds ?? state.level.difficulty.timerSeconds;
+  state.timerTotal = duration;
+  state.timerLeft = duration;
   updateTimerUi();
 
   state.timerHandle = setInterval(() => {
@@ -166,8 +188,7 @@ function spawnCelebration() {
   }
 }
 
-function updateBoardStates() {
-  const flow = traceFlow(state.level);
+function updateBoardStates(flow = traceFlow(state.level)) {
   const frame = document.querySelector('.board-frame');
   if (frame) {
     frame.classList.toggle('board-flowing', state.status === 'flowing' || state.status === 'won');
@@ -178,7 +199,7 @@ function updateBoardStates() {
     for (let c = 0; c < state.level.size; c += 1) {
       const tile = state.level.grid[r][c];
       const key = tileKey(r, c);
-      const btn = document.querySelector(`.pipe-tile[data-r="${r}"][data-c="${c}"]`);
+      const btn = state.tileButtons.get(key);
       if (!btn) continue;
 
       const rotor = btn.querySelector('.pipe-rotor');
@@ -228,7 +249,9 @@ function updateStatusAndButtons() {
     primaryBtn.textContent = '💧 Water Flowing...';
   } else if (state.status === 'leaked') {
     banner.classList.add('leak');
-    banner.textContent = '💦 Oops, a splashy leak! Tap the pipes to fix it!';
+    banner.textContent = state.reachedGoalWithLeak
+      ? '💦 Almost! Fix the leaky branch so no water spills!'
+      : '💦 Oops, a splashy leak! Tap the pipes to fix it!';
     primaryBtn.textContent = '💧 Try Water Again!';
   } else {
     banner.textContent = 'Tap pipes to turn them and connect the faucet to the pond!';
@@ -240,11 +263,12 @@ function triggerWaterFlow() {
   if (state.status === 'flowing' || state.status === 'won') return;
   clearTimers();
   state.status = 'flowing';
+  state.reachedGoalWithLeak = false;
   state.flowingKeys = new Set();
   state.leakKeys = new Set();
 
   const flow = traceFlow(state.level);
-  updateBoardStates();
+  updateBoardStates(flow);
 
   flow.waves.forEach((wave, waveIndex) => {
     const t = setTimeout(() => {
@@ -252,25 +276,26 @@ function triggerWaterFlow() {
         state.flowingKeys.add(tileKey(cell.r, cell.c));
       }
       playWaterBubble(waveIndex);
-      updateBoardStates();
+      updateBoardStates(flow);
     }, waveIndex * 145);
     state.flowTimers.push(t);
   });
 
   const finishDelay = flow.waves.length * 145 + 160;
   const endTimer = setTimeout(() => {
-    if (flow.reachedGoal) {
+    if (flow.reachedGoal && flow.leaks.length === 0) {
       state.status = 'won';
       state.bloomedCount += 1;
-      localStorage.setItem(STORAGE_KEY, String(state.bloomedCount));
+      saveBloomedCount(state.bloomedCount);
       playBloomFanfare();
       spawnCelebration();
     } else {
       state.status = 'leaked';
+      state.reachedGoalWithLeak = flow.reachedGoal && flow.leaks.length > 0;
       state.leakKeys = new Set(flow.leaks.map((l) => tileKey(l.r, l.c)));
       playSplashSound();
     }
-    updateBoardStates();
+    updateBoardStates(flow);
   }, finishDelay);
   state.flowTimers.push(endTimer);
 }
@@ -280,6 +305,7 @@ function loadNewLevel(difficultyId = state.difficultyId) {
   state.difficultyId = difficultyId;
   state.level = generateLevel(difficultyId);
   state.status = 'playing';
+  state.reachedGoalWithLeak = false;
   state.flowingKeys = new Set();
   state.leakKeys = new Set();
   renderApp();
@@ -297,13 +323,17 @@ function handleTileClick(r, c) {
 
   if (state.status === 'leaked') {
     state.status = 'playing';
+    state.reachedGoalWithLeak = false;
     state.flowingKeys = new Set();
     state.leakKeys = new Set();
+    if (state.mode === 'timed') {
+      startTimerIfNeeded(Math.min(10, state.level.difficulty.timerSeconds));
+    }
   }
 
   const flow = traceFlow(state.level);
   playRotateSound(flow.connectedKeys.has(tileKey(r, c)));
-  updateBoardStates();
+  updateBoardStates(flow);
 }
 
 function renderApp() {
@@ -350,6 +380,7 @@ function renderApp() {
             const alt = (tile.r + tile.c) % 2 === 1 ? 'alt' : '';
             const locked = tile.locked ? 'locked' : '';
             const faucet = tile.type === 'faucet' ? 'faucet-tile' : '';
+            const disabled = tile.type === 'pond' ? 'disabled' : '';
             const label =
               tile.type === 'faucet'
                 ? 'Garden faucet — tap to turn on water'
@@ -362,7 +393,8 @@ function renderApp() {
                 class="pipe-tile ${alt} ${locked} ${faucet}"
                 data-r="${tile.r}"
                 data-c="${tile.c}"
-                aria-label="${label}">
+                aria-label="${label}"
+                ${disabled}>
                 <span class="pipe-rotor" style="transform: rotate(${tile.locked ? 0 : tile.visualRotation * 90}deg)">
                   ${renderPipeSvg(tile)}
                 </span>
@@ -381,9 +413,13 @@ function renderApp() {
     </div>
   `;
 
+  state.tileButtons = new Map();
   app.querySelectorAll('.pipe-tile').forEach((btn) => {
+    const r = Number(btn.dataset.r);
+    const c = Number(btn.dataset.c);
+    state.tileButtons.set(tileKey(r, c), btn);
     btn.addEventListener('click', () => {
-      handleTileClick(Number(btn.dataset.r), Number(btn.dataset.c));
+      handleTileClick(r, c);
     });
   });
 

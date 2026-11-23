@@ -234,6 +234,10 @@ body {
   background: #c6e0bc;
 }
 
+.pipe-tile:disabled {
+  opacity: 1;
+}
+
 .pipe-tile.faucet-tile {
   cursor: pointer;
 }
@@ -290,7 +294,7 @@ body {
 }
 
 .valve-wheel {
-  transform-origin: 40px 26px;
+  transform-origin: 40px 24px;
   transition: transform 0.6s ease;
 }
 
